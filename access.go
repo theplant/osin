@@ -3,7 +3,6 @@ package osin
 import (
 	"errors"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -155,18 +154,11 @@ func (s *Server) handleAuthorizationCodeRequest(w *Response, r *http.Request) *A
 		return nil
 	}
 
-	unescapedUri, err := url.QueryUnescape(r.Form.Get("redirect_uri"))
-	if err != nil {
-		w.SetErrorState(E_INVALID_REQUEST, "", "")
-		w.InternalError = err
-		return nil
-	}
-
 	// generate access token
 	ret := &AccessRequest{
 		Type:            AUTHORIZATION_CODE,
 		Code:            r.Form.Get("code"),
-		RedirectUri:     unescapedUri,
+		RedirectUri:     r.Form.Get("redirect_uri"),
 		GenerateRefresh: true,
 		Expiration:      s.Config.AccessExpiration,
 		HttpRequest:     r,
@@ -184,7 +176,7 @@ func (s *Server) handleAuthorizationCodeRequest(w *Response, r *http.Request) *A
 	}
 
 	// must be a valid authorization code
-	// var err error
+	var err error
 	ret.AuthorizeData, err = w.Storage.LoadAuthorize(ret.Code)
 	if err != nil {
 		w.SetError(E_INVALID_GRANT, "")
