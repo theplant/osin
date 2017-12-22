@@ -36,6 +36,7 @@ type AccessRequest struct {
 	AssertionType   string
 	Assertion       string
 	Link3rd         string
+	Link3rdToken    string
 
 	// Set if request is authorized
 	Authorized bool
@@ -402,6 +403,7 @@ func (s *Server) handleAssertionRequest(w *Response, r *http.Request) *AccessReq
 		Assertion:       r.Form.Get("assertion"),
 		Link3rd:         r.Form.Get("link3rd"),
 		Password:        r.Form.Get("password"),
+		Link3rdToken:    r.Form.Get("link3rd_token"),
 		GenerateRefresh: false, // assertion should NOT generate a refresh token, per the RFC
 		Expiration:      s.Config.AccessExpiration,
 		HttpRequest:     r,
