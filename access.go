@@ -137,8 +137,6 @@ func (s *Server) HandleAccessRequest(w *Response, r *http.Request) *AccessReques
 			return s.handleRefreshTokenRequest(w, r)
 		case PASSWORD:
 			return s.handlePasswordRequest(w, r)
-		case CLIENT_CREDENTIALS:
-			return s.handleClientCredentialsRequest(w, r)
 		case ASSERTION:
 			return s.handleAssertionRequest(w, r)
 		}
