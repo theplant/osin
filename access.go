@@ -146,7 +146,7 @@ func (s *Server) HandleAccessRequest(w *Response, r *http.Request) *AccessReques
 	return nil
 }
 
-// HandleAccessRequest is the http.HandlerFunc for handling access token requests with no autherization header
+// HandleAccessRequest is the http.HandlerFunc for handling access token requests with no authorization header
 func (s *Server) HandleAccessRequestNoClientSecret(w *Response, r *http.Request) *AccessRequest {
 	// Only allow GET or POST
 	if r.Method == "GET" {
