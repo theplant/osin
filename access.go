@@ -176,7 +176,7 @@ func (s *Server) HandleAccessRequestNoClientSecret(w *Response, r *http.Request)
 		case PASSWORD:
 			return s.handlePasswordRequestNoAuth(w, r)
 		case ASSERTION:
-			return s.handleRefreshTokenRequestNoAuth(w, r)
+			return s.handleAssertionRequestNoAuth(w, r)
 		}
 	}
 
@@ -543,6 +543,37 @@ func (s *Server) handleAssertionRequest(w *Response, r *http.Request) *AccessReq
 
 	// must have a valid client
 	if ret.Client = getClient(auth, w.Storage, w); ret.Client == nil {
+		return nil
+	}
+
+	// set redirect uri
+	ret.RedirectUri = FirstUri(ret.Client.GetRedirectUri(), s.Config.RedirectUriSeparator)
+
+	return ret
+}
+
+func (s *Server) handleAssertionRequestNoAuth(w *Response, r *http.Request) *AccessRequest {
+	var err error
+	// generate access token
+	ret := &AccessRequest{
+		Type:            ASSERTION,
+		Scope:           r.Form.Get("scope"),
+		AssertionType:   r.Form.Get("assertion_type"),
+		Assertion:       r.Form.Get("assertion"),
+		Link3rd:         r.Form.Get("link3rd"),
+		Password:        r.Form.Get("password"),
+		GenerateRefresh: false, // assertion should NOT generate a refresh token, per the RFC
+		Expiration:      s.Config.AccessExpiration,
+		HttpRequest:     r,
+	}
+
+	// "assertion_type" and "assertion" is required
+	if ret.AssertionType == "" || ret.Assertion == "" {
+		w.SetError(E_INVALID_GRANT, "")
+		return nil
+	}
+
+	if ret.Client, err = w.Storage.GetClient(r.Form.Get("client_id")); ret.Client == nil || err != nil{
 		return nil
 	}
 
