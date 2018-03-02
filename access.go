@@ -36,7 +36,6 @@ type AccessRequest struct {
 	AssertionType   string
 	Assertion       string
 	Link3rd         string
-	Link3rdToken    string
 
 	// Set if request is authorized
 	Authorized bool
@@ -140,6 +139,44 @@ func (s *Server) HandleAccessRequest(w *Response, r *http.Request) *AccessReques
 			return s.handlePasswordRequest(w, r)
 		case ASSERTION:
 			return s.handleAssertionRequest(w, r)
+		}
+	}
+
+	w.SetError(E_UNSUPPORTED_GRANT_TYPE, "")
+	return nil
+}
+
+// HandleAccessRequest is the http.HandlerFunc for handling access token requests with no authorization header
+func (s *Server) HandleAccessRequestNoClientSecret(w *Response, r *http.Request) *AccessRequest {
+	// Only allow GET or POST
+	if r.Method == "GET" {
+		if !s.Config.AllowGetAccessRequest {
+			w.SetError(E_INVALID_REQUEST, "")
+			w.InternalError = errors.New("Request must be POST")
+			return nil
+		}
+	} else if r.Method != "POST" {
+		w.SetError(E_INVALID_REQUEST, "")
+		w.InternalError = errors.New("Request must be POST")
+		return nil
+	}
+
+	err := r.ParseForm()
+	if err != nil {
+		w.SetError(E_INVALID_REQUEST, "")
+		w.InternalError = err
+		return nil
+	}
+
+	grantType := AccessRequestType(r.Form.Get("grant_type"))
+	if s.Config.AllowedAccessTypes.Exists(grantType) {
+		switch grantType {
+		case REFRESH_TOKEN:
+			return s.handleRefreshTokenRequestNoAuth(w, r)
+		case PASSWORD:
+			return s.handlePasswordRequestNoAuth(w, r)
+		case ASSERTION:
+			return s.handleAssertionRequestNoAuth(w, r)
 		}
 	}
 
@@ -326,6 +363,69 @@ func (s *Server) handleRefreshTokenRequest(w *Response, r *http.Request) *Access
 	return ret
 }
 
+func (s *Server) handleRefreshTokenRequestNoAuth(w *Response, r *http.Request) *AccessRequest {
+
+	// generate access token
+	ret := &AccessRequest{
+		Type:            REFRESH_TOKEN,
+		Code:            r.Form.Get("refresh_token"),
+		Scope:           r.Form.Get("scope"),
+		GenerateRefresh: true,
+		Expiration:      s.Config.AccessExpiration,
+		HttpRequest:     r,
+	}
+
+	// "refresh_token" is required
+	if ret.Code == "" {
+		w.SetError(E_INVALID_GRANT, "")
+		return nil
+	}
+
+	// must be a valid refresh code
+	var err error
+	ret.AccessData, err = w.Storage.LoadRefresh(ret.Code)
+	if err != nil {
+		w.SetError(E_INVALID_GRANT, "")
+		w.InternalError = err
+		return nil
+	}
+	if ret.AccessData == nil {
+		w.SetError(E_UNAUTHORIZED_CLIENT, "")
+		return nil
+	}
+	if ret.AccessData.Client == nil {
+		w.SetError(E_UNAUTHORIZED_CLIENT, "")
+		return nil
+	}
+	if ret.AccessData.Client.GetRedirectUri() == "" {
+		w.SetError(E_UNAUTHORIZED_CLIENT, "")
+		return nil
+	}
+
+	// client must be the same as the previous token
+	if ret.AccessData.Client.GetId() != ret.Client.GetId() {
+		w.SetError(E_INVALID_CLIENT, "")
+		w.InternalError = errors.New("Client id must be the same from previous token")
+		return nil
+
+	}
+
+	// set rest of data
+	ret.RedirectUri = ret.AccessData.RedirectUri
+	ret.UserData = ret.AccessData.UserData
+	if ret.Scope == "" {
+		ret.Scope = ret.AccessData.Scope
+	}
+
+	if extraScopes(ret.AccessData.Scope, ret.Scope) {
+		w.SetError(E_ACCESS_DENIED, "")
+		w.InternalError = errors.New("the requested scope must not include any scope not originally granted by the resource owner")
+		return nil
+	}
+
+	return ret
+}
+
 func (s *Server) handlePasswordRequest(w *Response, r *http.Request) *AccessRequest {
 	// get client authentication
 	auth := getClientAuth(w, r, s.Config.AllowClientSecretInParams)
@@ -352,6 +452,33 @@ func (s *Server) handlePasswordRequest(w *Response, r *http.Request) *AccessRequ
 
 	// must have a valid client
 	if ret.Client = getClient(auth, w.Storage, w); ret.Client == nil {
+		return nil
+	}
+
+	// set redirect uri
+	ret.RedirectUri = FirstUri(ret.Client.GetRedirectUri(), s.Config.RedirectUriSeparator)
+
+	return ret
+}
+
+func (s *Server) handlePasswordRequestNoAuth(w *Response, r *http.Request) *AccessRequest {
+	var err error
+	ret := &AccessRequest{
+		Type:            PASSWORD,
+		Username:        r.Form.Get("username"),
+		Password:        r.Form.Get("password"),
+		Scope:           r.Form.Get("scope"),
+		GenerateRefresh: true,
+		Expiration:      s.Config.AccessExpiration,
+		HttpRequest:     r,
+	}
+	// "username" and "password" is required
+	if ret.Username == "" || ret.Password == "" {
+		w.SetError(E_INVALID_GRANT, "")
+		return nil
+	}
+
+	if ret.Client, err = w.Storage.GetClient(r.Form.Get("client_id")); ret.Client == nil || err != nil{
 		return nil
 	}
 
@@ -403,7 +530,6 @@ func (s *Server) handleAssertionRequest(w *Response, r *http.Request) *AccessReq
 		Assertion:       r.Form.Get("assertion"),
 		Link3rd:         r.Form.Get("link3rd"),
 		Password:        r.Form.Get("password"),
-		Link3rdToken:    r.Form.Get("link3rd_token"),
 		GenerateRefresh: false, // assertion should NOT generate a refresh token, per the RFC
 		Expiration:      s.Config.AccessExpiration,
 		HttpRequest:     r,
@@ -417,6 +543,37 @@ func (s *Server) handleAssertionRequest(w *Response, r *http.Request) *AccessReq
 
 	// must have a valid client
 	if ret.Client = getClient(auth, w.Storage, w); ret.Client == nil {
+		return nil
+	}
+
+	// set redirect uri
+	ret.RedirectUri = FirstUri(ret.Client.GetRedirectUri(), s.Config.RedirectUriSeparator)
+
+	return ret
+}
+
+func (s *Server) handleAssertionRequestNoAuth(w *Response, r *http.Request) *AccessRequest {
+	var err error
+	// generate access token
+	ret := &AccessRequest{
+		Type:            ASSERTION,
+		Scope:           r.Form.Get("scope"),
+		AssertionType:   r.Form.Get("assertion_type"),
+		Assertion:       r.Form.Get("assertion"),
+		Link3rd:         r.Form.Get("link3rd"),
+		Password:        r.Form.Get("password"),
+		GenerateRefresh: false, // assertion should NOT generate a refresh token, per the RFC
+		Expiration:      s.Config.AccessExpiration,
+		HttpRequest:     r,
+	}
+
+	// "assertion_type" and "assertion" is required
+	if ret.AssertionType == "" || ret.Assertion == "" {
+		w.SetError(E_INVALID_GRANT, "")
+		return nil
+	}
+
+	if ret.Client, err = w.Storage.GetClient(r.Form.Get("client_id")); ret.Client == nil || err != nil{
 		return nil
 	}
 
