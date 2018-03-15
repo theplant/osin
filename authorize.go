@@ -2,7 +2,6 @@ package osin
 
 import (
 	"net/http"
-	"net/url"
 	"regexp"
 	"time"
 )
