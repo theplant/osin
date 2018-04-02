@@ -4,25 +4,29 @@ package main
 // http://localhost:14000/app
 
 import (
+	"crypto/rsa"
 	"fmt"
-	"github.com/RangelReale/osin"
-	"github.com/RangelReale/osin/example"
-	"github.com/dgrijalva/jwt-go"
 	"net/http"
 	"net/url"
+
+	"github.com/RangelReale/osin"
+	"github.com/RangelReale/osin/example"
+	jwt "github.com/dgrijalva/jwt-go"
 )
 
 // JWT access token generator
 type AccessTokenGenJWT struct {
-	PrivateKey []byte
-	PublicKey  []byte
+	PrivateKey *rsa.PrivateKey
+	PublicKey  *rsa.PublicKey
 }
 
 func (c *AccessTokenGenJWT) GenerateAccessToken(data *osin.AccessData, generaterefresh bool) (accesstoken string, refreshtoken string, err error) {
 	// generate JWT access token
-	token := jwt.New(jwt.GetSigningMethod("RS256"))
-	token.Claims["cid"] = data.Client.GetId()
-	token.Claims["exp"] = data.ExpireAt().Unix()
+
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"cid": data.Client.GetId(),
+		"exp": data.ExpireAt().Unix(),
+	})
 
 	accesstoken, err = token.SignedString(c.PrivateKey)
 	if err != nil {
@@ -33,11 +37,10 @@ func (c *AccessTokenGenJWT) GenerateAccessToken(data *osin.AccessData, generater
 		return
 	}
 
-	// generate JWT access token
-	token = jwt.New(jwt.GetSigningMethod("RS256"))
-	token.Claims["cid"] = data.Client.GetId()
-	token.Claims["at"] = accesstoken
-	token.Claims["exp"] = data.ExpireAt().Unix()
+	// generate JWT refresh token
+	token = jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"cid": data.Client.GetId(),
+	})
 
 	refreshtoken, err = token.SignedString(c.PrivateKey)
 	if err != nil {
@@ -48,7 +51,21 @@ func (c *AccessTokenGenJWT) GenerateAccessToken(data *osin.AccessData, generater
 
 func main() {
 	server := osin.NewServer(osin.NewServerConfig(), example.NewTestStorage())
-	server.AccessTokenGen = &AccessTokenGenJWT{privatekey, publickey}
+
+	var err error
+	var accessTokenGenJWT AccessTokenGenJWT
+
+	if accessTokenGenJWT.PrivateKey, err = jwt.ParseRSAPrivateKeyFromPEM(privatekeyPEM); err != nil {
+		fmt.Printf("ERROR: %s\n", err)
+		return
+	}
+
+	if accessTokenGenJWT.PublicKey, err = jwt.ParseRSAPublicKeyFromPEM(publickeyPEM); err != nil {
+		fmt.Printf("ERROR: %s\n", err)
+		return
+	}
+
+	server.AccessTokenGen = &accessTokenGenJWT
 
 	// Authorization code endpoint
 	http.HandleFunc("/authorize", func(w http.ResponseWriter, r *http.Request) {
@@ -158,7 +175,7 @@ func main() {
 }
 
 var (
-	privatekey = []byte(`-----BEGIN RSA PRIVATE KEY-----
+	privatekeyPEM = []byte(`-----BEGIN RSA PRIVATE KEY-----
 MIIEowIBAAKCAQEA4f5wg5l2hKsTeNem/V41fGnJm6gOdrj8ym3rFkEU/wT8RDtn
 SgFEZOQpHEgQ7JL38xUfU0Y3g6aYw9QT0hJ7mCpz9Er5qLaMXJwZxzHzAahlfA0i
 cqabvJOMvQtzD6uQv6wPEyZtDTWiQi9AXwBpHssPnpYGIn20ZZuNlX2BrClciHhC
@@ -186,7 +203,7 @@ CKuHRG+AP579dncdUnOMvfXOtkdM4vk0+hWASBQzM9xzVcztCa+koAugjVaLS9A+
 9uQoqEeVNTckxx0S2bYevRy7hGQmUJTyQm3j1zEUR5jpdbL83Fbq
 -----END RSA PRIVATE KEY-----`)
 
-	publickey = []byte(`-----BEGIN PUBLIC KEY-----
+	publickeyPEM = []byte(`-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4f5wg5l2hKsTeNem/V41
 fGnJm6gOdrj8ym3rFkEU/wT8RDtnSgFEZOQpHEgQ7JL38xUfU0Y3g6aYw9QT0hJ7
 mCpz9Er5qLaMXJwZxzHzAahlfA0icqabvJOMvQtzD6uQv6wPEyZtDTWiQi9AXwBp
